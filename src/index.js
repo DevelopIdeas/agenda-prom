@@ -17,6 +17,14 @@ class AgendaMetricsCollector {
     this.metricsFilePath = options.metricsFilePath || path.join(process.cwd(), 'agenda_metrics.prom');
     this.updateInterval = options.updateInterval || 5000; // 5 seconds
     this.processName = options.processName || process.env.NAME || 'default-process';
+    const redundantPrefix = 'data-warehouse-'
+    const redundantSuffix = '-agenda'
+    if (this.processName && this.processName !== `${redundantPrefix}agenda` && this.processName.startsWith(redundantPrefix)) {
+      this.processName = this.processName.replace(redundantPrefix,'')
+    }
+    if (this.processName.endsWith(redundantSuffix)) {
+      this.processName = this.processName.replace(redundantSuffix,'')
+    }
     this.agenda = agenda;
     
     // Create a Registry
