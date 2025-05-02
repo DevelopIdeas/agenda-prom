@@ -80,7 +80,8 @@ class AgendaMetricsCollector {
     this.jobDurationHistogram = new client.Histogram({
       name: 'agenda_job_duration_seconds',
       help: 'Job execution time in seconds',
-      labelNames: ['jobName', 'process']
+      labelNames: ['jobName', 'process'],
+      buckets: [10, 60, 300, 600],
     });
     
     this.jobQueueGauge = new client.Gauge({
