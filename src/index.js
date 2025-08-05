@@ -30,6 +30,9 @@ class AgendaMetricsCollector {
     // Create a Registry
     this.register = new client.Registry();
     
+    // Track currently running jobs with their start times
+    this.runningJobs = new Map(); // jobId -> { jobName, startTime, process }
+    
     // Initialize metrics
     this.initializeMetrics();
     
@@ -108,6 +111,18 @@ class AgendaMetricsCollector {
       labelNames: ['process']
     });
     
+    this.jobStartTimeGauge = new client.Gauge({
+      name: 'agenda_job_start_time',
+      help: 'Start time of currently running jobs in Unix time (seconds)',
+      labelNames: ['jobName', 'jobId', 'process']
+    });
+    
+    this.longRunningJobsGauge = new client.Gauge({
+      name: 'agenda_long_running_jobs',
+      help: 'Number of jobs running longer than threshold',
+      labelNames: ['jobName', 'process', 'threshold_minutes']
+    });
+    
     // Register metrics
     this.register.registerMetric(this.jobsProcessedCounter);
     this.register.registerMetric(this.jobDurationHistogram);
@@ -115,6 +130,8 @@ class AgendaMetricsCollector {
     this.register.registerMetric(this.dbConnectionGauge);
     this.register.registerMetric(this.runningJobsGauge);
     this.register.registerMetric(this.lastJobStartGauge);
+    this.register.registerMetric(this.jobStartTimeGauge);
+    this.register.registerMetric(this.longRunningJobsGauge);
   }
   
   setupEventListeners() {
@@ -142,13 +159,34 @@ class AgendaMetricsCollector {
     // Monitor job starts and completions
     this.agenda.on('start', (job) => {
       const jobName = job.attrs.name;
+      const jobId = job.attrs._id.toString();
+      const startTime = Date.now();
+      
+      console.log(`Job started: ${jobName} (ID: ${jobId})`);
+      
+      // Track the running job
+      this.runningJobs.set(jobId, {
+        jobName,
+        startTime,
+        process: this.processName
+      });
       
       // Update last job start timestamp
-      const currentTimestamp = Math.floor(Date.now() / 1000);
+      const currentTimestamp = Math.floor(startTime / 1000);
       this.lastJobStartGauge.set({ process: this.processName }, currentTimestamp);
+      
+      // Set job start time metric
+      this.jobStartTimeGauge.set({ 
+        jobName, 
+        jobId, 
+        process: this.processName 
+      }, currentTimestamp);
       
       // Increment running jobs counter
       this.runningJobsGauge.inc({ jobName, process: this.processName });
+      
+      // Update long-running job metrics
+      this.updateLongRunningJobMetrics();
       
       if (this.alloyMode === 'file') {
         this.writeMetricsToFile();
@@ -156,15 +194,115 @@ class AgendaMetricsCollector {
     });
     
     this.agenda.on('complete', (job) => {
-      const jobName = job.attrs.name;
+      this.handleJobCompletion(job, 'complete');
+    });
+    
+    this.agenda.on('fail', (err, job) => {
+      console.error(`Job failed: ${job.attrs.name} (ID: ${job.attrs._id.toString()})`, err);
+      this.handleJobCompletion(job, 'fail');
+    });
+    
+    // Set up periodic check for long-running jobs
+    this.longRunningJobCheckInterval = setInterval(() => {
+      this.updateLongRunningJobMetrics();
+      this.checkForStuckJobs();
+    }, 30000); // Check every 30 seconds
+  }
+  
+  handleJobCompletion(job, status) {
+    const jobName = job.attrs.name;
+    const jobId = job.attrs._id.toString();
+    
+    console.log(`Job ${status}: ${jobName} (ID: ${jobId})`);
+    
+    // Remove from running jobs tracking
+    const runningJob = this.runningJobs.get(jobId);
+    if (runningJob) {
+      this.runningJobs.delete(jobId);
+      
+      // Clear job start time metric
+      this.jobStartTimeGauge.remove({ 
+        jobName, 
+        jobId, 
+        process: this.processName 
+      });
       
       // Decrement running jobs counter
       this.runningJobsGauge.dec({ jobName, process: this.processName });
       
+      // Update long-running job metrics
+      this.updateLongRunningJobMetrics();
+      
       if (this.alloyMode === 'file') {
         this.writeMetricsToFile();
       }
-    });
+    } else {
+      console.warn(`Job completion event for unknown job: ${jobName} (ID: ${jobId})`);
+    }
+  }
+  
+  updateLongRunningJobMetrics() {
+    const now = Date.now();
+    const thresholds = [5, 15, 30, 60]; // minutes
+    
+    // Reset all long-running job counters
+    for (const threshold of thresholds) {
+      this.longRunningJobsGauge.reset();
+    }
+    
+    // Count long-running jobs by threshold
+    const jobCounts = new Map();
+    
+    for (const [jobId, jobInfo] of this.runningJobs) {
+      const runningTimeMinutes = (now - jobInfo.startTime) / (1000 * 60);
+      
+      for (const threshold of thresholds) {
+        if (runningTimeMinutes > threshold) {
+          const key = `${jobInfo.jobName}_${threshold}`;
+          jobCounts.set(key, (jobCounts.get(key) || 0) + 1);
+        }
+      }
+    }
+    
+    // Update metrics
+    for (const [key, count] of jobCounts) {
+      const [jobName, threshold] = key.split('_');
+      this.longRunningJobsGauge.set({ 
+        jobName, 
+        process: this.processName, 
+        threshold_minutes: threshold 
+      }, count);
+    }
+  }
+  
+  checkForStuckJobs() {
+    const now = Date.now();
+    const stuckThreshold = 60 * 60 * 1000; // 1 hour
+    
+    for (const [jobId, jobInfo] of this.runningJobs) {
+      const runningTime = now - jobInfo.startTime;
+      if (runningTime > stuckThreshold) {
+        console.warn(`Potentially stuck job detected: ${jobInfo.jobName} (ID: ${jobId}) running for ${Math.round(runningTime / (1000 * 60))} minutes`);
+      }
+    }
+  }
+  
+  getCurrentlyRunningJobs() {
+    const now = Date.now();
+    const jobs = [];
+    
+    for (const [jobId, jobInfo] of this.runningJobs) {
+      jobs.push({
+        jobId,
+        jobName: jobInfo.jobName,
+        process: jobInfo.process,
+        startTime: jobInfo.startTime,
+        runningTimeMs: now - jobInfo.startTime,
+        runningTimeMinutes: Math.round((now - jobInfo.startTime) / (1000 * 60))
+      });
+    }
+    
+    return jobs.sort((a, b) => b.runningTimeMs - a.runningTimeMs); // Sort by longest running first
   }
   
   async updateQueueMetrics() {
@@ -205,6 +343,7 @@ class AgendaMetricsCollector {
   withMetrics(jobName, jobFn) {
     return async (job, done) => {
       const startTime = Date.now();
+      const jobId = job.attrs._id.toString();
       
       try {
         // Execute the original job function
@@ -215,6 +354,14 @@ class AgendaMetricsCollector {
       } catch (error) {
         // Update metrics for failed job
         this.jobsProcessedCounter.inc({ jobName, status: 'failure', process: this.processName });
+        
+        // Ensure job is removed from running jobs tracking on error
+        if (this.runningJobs.has(jobId)) {
+          console.warn(`Cleaning up failed job from running jobs tracking: ${jobName} (ID: ${jobId})`);
+          this.runningJobs.delete(jobId);
+          this.jobStartTimeGauge.remove({ jobName, jobId, process: this.processName });
+          this.runningJobsGauge.dec({ jobName, process: this.processName });
+        }
         
         // Re-throw the error so Agenda can handle it
         throw error;
@@ -240,6 +387,28 @@ class AgendaMetricsCollector {
   }
   
   /**
+   * Get diagnostic information about currently running jobs
+   */
+  getDiagnostics() {
+    const runningJobs = this.getCurrentlyRunningJobs();
+    const now = Date.now();
+    
+    return {
+      totalRunningJobs: this.runningJobs.size,
+      runningJobs,
+      processName: this.processName,
+      isConnected: this.isConnected,
+      timestamp: now,
+      longRunningJobsCount: {
+        over5min: runningJobs.filter(j => j.runningTimeMinutes > 5).length,
+        over15min: runningJobs.filter(j => j.runningTimeMinutes > 15).length,
+        over30min: runningJobs.filter(j => j.runningTimeMinutes > 30).length,
+        over60min: runningJobs.filter(j => j.runningTimeMinutes > 60).length,
+      }
+    };
+  }
+  
+  /**
    * Get the Prometheus registry for direct integration with Alloy
    */
   getRegistry() {
@@ -247,10 +416,16 @@ class AgendaMetricsCollector {
   }
   
   cleanup() {
-    // Clear interval
+    // Clear intervals
     if (this.updateIntervalId) {
       clearInterval(this.updateIntervalId);
     }
+    if (this.longRunningJobCheckInterval) {
+      clearInterval(this.longRunningJobCheckInterval);
+    }
+    
+    // Clear running jobs tracking
+    this.runningJobs.clear();
     
     // Remove event listeners if possible
     if (this.agenda.removeAllListeners) {
@@ -258,6 +433,7 @@ class AgendaMetricsCollector {
       this.agenda.removeAllListeners('error');
       this.agenda.removeAllListeners('start');
       this.agenda.removeAllListeners('complete');
+      this.agenda.removeAllListeners('fail');
     }
   }
 }
