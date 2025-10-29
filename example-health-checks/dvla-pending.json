@@ -1,0 +1,5 @@
+{
+  "alert_name": "pending_customers_dvla_check",
+  "sql_query": "SELECT COUNT(*) as total FROM customer WHERE (dvla_checked IS NULL OR dvla_checked = 0) AND vehicle_reg IS NOT NULL AND vehicle_reg <> '' AND created_at < DATE_SUB(NOW(), INTERVAL 2 HOUR)",
+  "description": "Alert when customers have been waiting for DVLA check for more than 2 hours"
+}

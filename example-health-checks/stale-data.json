@@ -1,0 +1,5 @@
+{
+  "alert_name": "stale_customer_data",
+  "sql_query": "SELECT COUNT(*) as total FROM customer WHERE updated_at < DATE_SUB(NOW(), INTERVAL 24 HOUR) AND status = 'active'",
+  "description": "Alert when active customers haven't been updated in the last 24 hours"
+}

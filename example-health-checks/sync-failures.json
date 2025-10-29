@@ -1,0 +1,5 @@
+{
+  "alert_name": "failed_sync_operations",
+  "sql_query": "SELECT COUNT(*) as total FROM sync_log WHERE status = 'failed' AND created_at > DATE_SUB(NOW(), INTERVAL 1 HOUR)",
+  "description": "Alert when there are failed sync operations in the last hour"
+}

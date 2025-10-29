@@ -1,0 +1,46 @@
+# Example Prometheus Metrics Output for Health Alerts
+
+# When a health check is HEALTHY (total = 0)
+agenda_health_status{alert_name="pending_customers_dvla_check", process="ttcg-aftersales"} 0
+
+# When a health check is UNHEALTHY (total > 0)  
+agenda_health_status{alert_name="failed_sync_operations", process="ttcg-aftersales"} 1
+
+# Multiple health checks with different statuses
+agenda_health_status{alert_name="pending_customers_dvla_check", process="ttcg-aftersales"} 0
+agenda_health_status{alert_name="failed_sync_operations", process="ttcg-aftersales"} 1
+agenda_health_status{alert_name="stale_customer_data", process="ttcg-aftersales"} 0
+
+# Complete example with all existing agenda metrics plus health metrics
+# HELP agenda_jobs_processed_total Total number of processed jobs
+# TYPE agenda_jobs_processed_total counter
+agenda_jobs_processed_total{jobName="sync-results-v1.2.3", status="success", process="ttcg-aftersales"} 45
+agenda_jobs_processed_total{jobName="sync-results-v1.2.3", status="failure", process="ttcg-aftersales"} 2
+
+# HELP agenda_job_duration_seconds Job execution time in seconds
+# TYPE agenda_job_duration_seconds histogram
+agenda_job_duration_seconds_bucket{jobName="sync-results-v1.2.3", process="ttcg-aftersales", le="10"} 12
+agenda_job_duration_seconds_bucket{jobName="sync-results-v1.2.3", process="ttcg-aftersales", le="60"} 35
+agenda_job_duration_seconds_bucket{jobName="sync-results-v1.2.3", process="ttcg-aftersales", le="300"} 45
+agenda_job_duration_seconds_bucket{jobName="sync-results-v1.2.3", process="ttcg-aftersales", le="600"} 47
+agenda_job_duration_seconds_bucket{jobName="sync-results-v1.2.3", process="ttcg-aftersales", le="+Inf"} 47
+agenda_job_duration_seconds_sum{jobName="sync-results-v1.2.3", process="ttcg-aftersales"} 2847.5
+agenda_job_duration_seconds_count{jobName="sync-results-v1.2.3", process="ttcg-aftersales"} 47
+
+# HELP agenda_db_connected Database connection status (1 = connected, 0 = disconnected)
+# TYPE agenda_db_connected gauge
+agenda_db_connected{process="ttcg-aftersales"} 1
+
+# HELP agenda_jobs_running Number of jobs currently running
+# TYPE agenda_jobs_running gauge
+agenda_jobs_running{jobName="sync-results-v1.2.3", process="ttcg-aftersales"} 1
+
+# HELP agenda_last_job_start_timestamp Timestamp of the last job started in Unix time (seconds)
+# TYPE agenda_last_job_start_timestamp gauge
+agenda_last_job_start_timestamp{process="ttcg-aftersales"} 1730188800
+
+# HELP agenda_health_status Health status of monitored alerts (1 = unhealthy, 0 = healthy)
+# TYPE agenda_health_status gauge
+agenda_health_status{alert_name="pending_customers_dvla_check", process="ttcg-aftersales"} 0
+agenda_health_status{alert_name="failed_sync_operations", process="ttcg-aftersales"} 1
+agenda_health_status{alert_name="stale_customer_data", process="ttcg-aftersales"} 0
