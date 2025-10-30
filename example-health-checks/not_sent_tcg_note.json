@@ -1,0 +1,6 @@
+{
+  "alert_name": "not_sent_tcg_note",
+  "title": "Unsent TCG Notes",
+  "description": "Alert when TCG notes have not been sent for an extended period",
+  "enabled": true
+}

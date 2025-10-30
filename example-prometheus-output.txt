@@ -1,15 +1,15 @@
 # Example Prometheus Metrics Output for Health Alerts
 
 # When a health check is HEALTHY (total = 0)
-agenda_health_status{alert_name="pending_customers_dvla_check", process="ttcg-aftersales"} 0
+agenda_health_status{alert_name="pending_customers_dvla_check", title="DVLA Check Backlog", description="Alert when customers have been waiting for DVLA check for more than 2 hours", process="ttcg-aftersales"} 0
 
 # When a health check is UNHEALTHY (total > 0)  
-agenda_health_status{alert_name="failed_sync_operations", process="ttcg-aftersales"} 1
+agenda_health_status{alert_name="failed_sync_operations", title="Sync Operation Failures", description="Alert when there are failed sync operations in the last hour", process="ttcg-aftersales"} 1
 
 # Multiple health checks with different statuses
-agenda_health_status{alert_name="pending_customers_dvla_check", process="ttcg-aftersales"} 0
-agenda_health_status{alert_name="failed_sync_operations", process="ttcg-aftersales"} 1
-agenda_health_status{alert_name="stale_customer_data", process="ttcg-aftersales"} 0
+agenda_health_status{alert_name="pending_customers_dvla_check", title="DVLA Check Backlog", description="Alert when customers have been waiting for DVLA check for more than 2 hours", process="ttcg-aftersales"} 0
+agenda_health_status{alert_name="failed_sync_operations", title="Sync Operation Failures", description="Alert when there are failed sync operations in the last hour", process="ttcg-aftersales"} 1
+agenda_health_status{alert_name="not_sent_tcg_note", title="Unsent TCG Notes", description="Alert when TCG notes have not been sent for an extended period", process="ttcg-aftersales"} 0
 
 # Complete example with all existing agenda metrics plus health metrics
 # HELP agenda_jobs_processed_total Total number of processed jobs
@@ -41,6 +41,6 @@ agenda_last_job_start_timestamp{process="ttcg-aftersales"} 1730188800
 
 # HELP agenda_health_status Health status of monitored alerts (1 = unhealthy, 0 = healthy)
 # TYPE agenda_health_status gauge
-agenda_health_status{alert_name="pending_customers_dvla_check", process="ttcg-aftersales"} 0
-agenda_health_status{alert_name="failed_sync_operations", process="ttcg-aftersales"} 1
-agenda_health_status{alert_name="stale_customer_data", process="ttcg-aftersales"} 0
+agenda_health_status{alert_name="pending_customers_dvla_check", title="DVLA Check Backlog", description="Alert when customers have been waiting for DVLA check for more than 2 hours", process="ttcg-aftersales"} 0
+agenda_health_status{alert_name="failed_sync_operations", title="Sync Operation Failures", description="Alert when there are failed sync operations in the last hour", process="ttcg-aftersales"} 1
+agenda_health_status{alert_name="not_sent_tcg_note", title="Unsent TCG Notes", description="Alert when TCG notes have not been sent for an extended period", process="ttcg-aftersales"} 0

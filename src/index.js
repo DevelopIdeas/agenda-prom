@@ -151,7 +151,7 @@ class AgendaMetricsCollector {
     this.healthStatusGauge = new client.Gauge({
       name: 'agenda_health_status',
       help: 'Health status of monitored alerts (1 = unhealthy, 0 = healthy)',
-      labelNames: ['alert_name', 'process']
+      labelNames: ['alert_name', 'title', 'description', 'process']
     });
     
     // Register metrics
@@ -189,14 +189,32 @@ class AgendaMetricsCollector {
           const config = JSON.parse(fs.readFileSync(filePath, 'utf8'));
           
           // Validate required fields
-          if (!config.alert_name || !config.sql_query) {
-            console.warn(`Invalid health check config in ${file}: missing alert_name or sql_query`);
+          if (!config.alert_name) {
+            console.warn(`Invalid health check config in ${file}: missing alert_name`);
+            continue;
+          }
+          
+          // Load SQL query from corresponding .sql file
+          const baseName = path.basename(file, '.json');
+          const sqlFilePath = path.join(this.healthMetricsDirectory, `${baseName}.sql`);
+          
+          if (!fs.existsSync(sqlFilePath)) {
+            console.warn(`SQL file not found for health check ${file}: ${sqlFilePath}`);
+            continue;
+          }
+          
+          const sqlQuery = fs.readFileSync(sqlFilePath, 'utf8').trim();
+          if (!sqlQuery) {
+            console.warn(`Empty SQL query in ${sqlFilePath}`);
             continue;
           }
           
           configs.push({
             ...config,
-            file: file
+            sql_query: sqlQuery,
+            file: file,
+            sql_file: `${baseName}.sql`,
+            enabled: config.enabled !== undefined ? config.enabled : true
           });
         } catch (err) {
           console.error(`Error loading health check config from ${file}:`, err);
@@ -225,7 +243,12 @@ class AgendaMetricsCollector {
       
       if (!results || results.length === 0) {
         console.warn(`Health check query returned no results for ${config.alert_name}`);
-        this.healthStatusGauge.set({ alert_name: config.alert_name, process: this.processName }, 0);
+        this.healthStatusGauge.set({ 
+          alert_name: config.alert_name, 
+          title: config.title || config.alert_name,
+          description: config.description || '',
+          process: this.processName 
+        }, 0);
         return;
       }
       
@@ -234,7 +257,12 @@ class AgendaMetricsCollector {
       
       // Set health status: 1 if unhealthy (total > 0), 0 if healthy
       const isUnhealthy = total > 0 ? 1 : 0;
-      this.healthStatusGauge.set({ alert_name: config.alert_name, process: this.processName }, isUnhealthy);
+      this.healthStatusGauge.set({ 
+        alert_name: config.alert_name, 
+        title: config.title || config.alert_name,
+        description: config.description || '',
+        process: this.processName 
+      }, isUnhealthy);
       
       if (isUnhealthy) {
         console.warn(`Health check UNHEALTHY: ${config.alert_name} - total: ${total}`);
@@ -244,7 +272,12 @@ class AgendaMetricsCollector {
     } catch (err) {
       console.error(`Error executing health check for ${config.alert_name}:`, err);
       // Set to healthy (0) on error to avoid false alarms
-      this.healthStatusGauge.set({ alert_name: config.alert_name, process: this.processName }, 0);
+      this.healthStatusGauge.set({ 
+        alert_name: config.alert_name, 
+        title: config.title || config.alert_name,
+        description: config.description || '',
+        process: this.processName 
+      }, 0);
     }
   }
   
@@ -255,7 +288,11 @@ class AgendaMetricsCollector {
     const configs = this.loadHealthCheckConfigs();
     
     for (const config of configs) {
-      await this.executeHealthCheck(config);
+      if (config.enabled) {
+        await this.executeHealthCheck(config);
+      } else {
+        console.log(`Health check disabled, skipping: ${config.alert_name}`);
+      }
     }
     
     // Write updated metrics to file if in file mode
