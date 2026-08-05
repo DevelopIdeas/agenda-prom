@@ -22,6 +22,7 @@ class AgendaMetricsCollector {
     this.sequelize = options.sequelize || null;
     this.healthMetricsDirectory = options.healthMetricsDirectory || null;
     this.healthCheckInterval = options.healthCheckInterval || 30000; // 30 seconds
+    this.extraMetrics = Array.isArray(options.extraMetrics) ? options.extraMetrics : [];
     
     const redundantPrefix = 'data-warehouse-'
     const redundantSuffix = '-agenda'
@@ -52,6 +53,7 @@ class AgendaMetricsCollector {
     this.withMetrics = this.withMetrics.bind(this);
     this.cleanup = this.cleanup.bind(this);
     this.getRegistry = this.getRegistry.bind(this);
+    this.registerMetric = this.registerMetric.bind(this);
     
     // Start metrics collection
     this.setupEventListeners();
@@ -164,6 +166,26 @@ class AgendaMetricsCollector {
     this.register.registerMetric(this.jobStartTimeGauge);
     this.register.registerMetric(this.longRunningJobsGauge);
     this.register.registerMetric(this.healthStatusGauge);
+
+    // Register caller-provided metrics after built-ins.
+    for (const metric of this.extraMetrics) {
+      this.registerMetric(metric);
+    }
+  }
+
+  registerMetric(metric) {
+    if (!metric || typeof metric !== 'object') {
+      return false;
+    }
+
+    try {
+      this.register.registerMetric(metric);
+      return true;
+    } catch (err) {
+      const metricName = metric.name || 'unknown_metric';
+      console.warn(`Failed to register extra metric ${metricName}:`, err.message || err);
+      return false;
+    }
   }
   
   /**
@@ -609,3 +631,4 @@ class AgendaMetricsCollector {
 }
 
 module.exports = AgendaMetricsCollector;
+module.exports.promClient = client
