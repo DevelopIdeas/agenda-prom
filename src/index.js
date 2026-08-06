@@ -407,6 +407,8 @@ class AgendaMetricsCollector {
   async _runCheckWithTimeout(name, checkFn, timeout = SYSTEM_HEALTH_CHECK_TIMEOUT_MS) {
     const startTime = Date.now();
 
+    this.logger.debug('Running check with timeout', { name, timeout });
+
     return Promise.race([
       checkFn()
         .then((result) => ({
