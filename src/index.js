@@ -88,6 +88,7 @@ class AgendaMetricsCollector {
     
     // Track connection status
     this.isConnected = false;
+    this._initialSystemHealthCheckDone = false;
     
     // Bind methods to ensure correct `this` context
     // this.updateQueueMetrics = this.updateQueueMetrics.bind(this);
@@ -498,6 +499,10 @@ class AgendaMetricsCollector {
     ]);
   }
 
+  _isAgendaReady() {
+    return !!(this.isConnected || (this.agenda?._collection && this.agenda?._db));
+  }
+
   async _checkDb(db, name) {
     if (!db) throw new Error(`db ${name} not initialized`);
     await db.authenticate();
@@ -627,6 +632,18 @@ class AgendaMetricsCollector {
       }
 
       if (this.agenda) {
+        if (!this._isAgendaReady()) {
+          health.mongo = {
+            status: 'unknown',
+            lastCheck: nowIso(),
+            error: null,
+            duration: 0,
+            scheduledJobs: null,
+          };
+          checkResults.mongo = health.mongo;
+          checkResults.agenda = { ready: false, skipped: ['jobStatuses', 'longRunningJobs'] };
+          this.logger.debug('Health Check: Agenda not ready yet, skipping Mongo/job checks');
+        } else {
         const result = await this._runCheckWithTimeout('MongoDB/Agenda', () => this._checkMongo());
         health.mongo = {
           status: result.success ? 'healthy' : 'unhealthy',
@@ -665,6 +682,7 @@ class AgendaMetricsCollector {
           duration: longResult.duration,
         };
         checkResults.longRunningJobs = health.longRunningJobs;
+        }
       }
 
       let systemUnresponsive = false;
@@ -788,9 +806,22 @@ class AgendaMetricsCollector {
       }
     };
 
-    this.performSystemHealthCheck()
-      .then(handleResult)
-      .catch((err) => this.logger.error('Initial health check failed', err));
+    const runInitialCheck = () => {
+      if (this._initialSystemHealthCheckDone) {
+        return;
+      }
+      this._initialSystemHealthCheckDone = true;
+      this.performSystemHealthCheck()
+        .then(handleResult)
+        .catch((err) => this.logger.error('Initial health check failed', err));
+    };
+
+    if (this._isAgendaReady()) {
+      runInitialCheck();
+    } else {
+      this._onAgendaReadyForHealthCheck = runInitialCheck;
+      this.agenda.once('ready', this._onAgendaReadyForHealthCheck);
+    }
 
     this.systemHealthCheckIntervalId = setInterval(async () => {
       try {
