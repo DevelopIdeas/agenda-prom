@@ -18,6 +18,10 @@ const SYSTEM_LONG_RUNNING_JOB_MINUTES = 30;
  * Agenda/Mongo, long-running / stuck jobs). Configure via options.healthCheck;
  * set HEALTH_CHECK_AUTO_RESTART=1 (or healthCheck.autoRestartOnStuck) to exit
  * when no job has run for > 60 minutes.
+ *
+ * Optional long-running thresholds (defaults unchanged for existing deploys):
+ *   healthCheck.longRunningJobMinutes — default minutes before a job counts as long-running (default 30)
+ *   healthCheck.longRunningJobMinutesByName — { [jobName]: minutes } overrides per Agenda job name
  */
 class AgendaMetricsCollector {
   constructor(agenda, options = {}) {
@@ -35,7 +39,7 @@ class AgendaMetricsCollector {
 
     // System health check (DB auth, Agenda/Mongo, stuck jobs) — on by default
     // Pass options.healthCheck = false to disable, or an object:
-    // { dbs, intervalMinutes, autoRestartOnStuck, enabled }
+    // { dbs, intervalMinutes, autoRestartOnStuck, enabled, longRunningJobMinutes, longRunningJobMinutesByName }
     // Logger: options.logger (top-level)
     const healthCheck = options.healthCheck === false
       ? { enabled: false }
@@ -47,6 +51,13 @@ class AgendaMetricsCollector {
     this.autoRestartOnStuck = healthCheck.autoRestartOnStuck != null
       ? !!healthCheck.autoRestartOnStuck
       : process.env.HEALTH_CHECK_AUTO_RESTART === '1';
+    this.longRunningJobMinutes = AgendaMetricsCollector._normalizeLongRunningMinutes(
+      healthCheck.longRunningJobMinutes,
+      SYSTEM_LONG_RUNNING_JOB_MINUTES
+    );
+    this.longRunningJobMinutesByName = AgendaMetricsCollector._normalizeLongRunningMinutesByName(
+      healthCheck.longRunningJobMinutesByName
+    );
     this._systemHealth = {
       dbs: {},
       mongo: { status: 'unknown', lastCheck: null, error: null },
@@ -254,6 +265,57 @@ class AgendaMetricsCollector {
     }
   }
 
+  static _normalizeLongRunningMinutes(value, fallback) {
+    const n = Number(value);
+    if (!Number.isFinite(n) || n <= 0) {
+      return fallback;
+    }
+    return Math.floor(n);
+  }
+
+  static _normalizeLongRunningMinutesByName(byName) {
+    if (!byName || typeof byName !== 'object' || Array.isArray(byName)) {
+      return {};
+    }
+    const out = {};
+    for (const [jobName, minutes] of Object.entries(byName)) {
+      if (typeof jobName !== 'string' || !jobName.trim()) {
+        continue;
+      }
+      const normalized = AgendaMetricsCollector._normalizeLongRunningMinutes(minutes, null);
+      if (normalized != null) {
+        out[jobName] = normalized;
+      }
+    }
+    return out;
+  }
+
+  _longRunningThresholdForJobName(jobName) {
+    if (jobName && Object.prototype.hasOwnProperty.call(this.longRunningJobMinutesByName, jobName)) {
+      return this.longRunningJobMinutesByName[jobName];
+    }
+    return this.longRunningJobMinutes;
+  }
+
+  _minimumLongRunningJobMinutes() {
+    const values = [
+      this.longRunningJobMinutes,
+      ...Object.values(this.longRunningJobMinutesByName),
+    ];
+    return Math.min(...values);
+  }
+
+  _longRunningThresholdSummary() {
+    const overrideKeys = Object.keys(this.longRunningJobMinutesByName);
+    if (overrideKeys.length === 0) {
+      return `${this.longRunningJobMinutes} minutes`;
+    }
+    const overrides = overrideKeys
+      .map((name) => `${name}=${this.longRunningJobMinutesByName[name]}`)
+      .join(', ');
+    return `default ${this.longRunningJobMinutes} minutes; overrides: ${overrides}`;
+  }
+
   registerMetric(metric) {
     if (!metric || typeof metric !== 'object') {
       return false;
@@ -452,16 +514,17 @@ class AgendaMetricsCollector {
     throw new Error('Agenda connection not ready');
   }
 
-  async _checkLongRunningJobs(thresholdMinutes = SYSTEM_LONG_RUNNING_JOB_MINUTES) {
+  async _checkLongRunningJobs() {
     if (!this.agenda || !this.agenda._collection) {
       throw new Error('Agenda not initialized');
     }
 
-    const thresholdMs = thresholdMinutes * 60 * 1000;
-    const now = new Date();
-    const thresholdTime = new Date(now.getTime() - thresholdMs);
+    const queryThresholdMinutes = this._minimumLongRunningJobMinutes();
+    const thresholdMs = queryThresholdMinutes * 60 * 1000;
+    const nowMs = Date.now();
+    const thresholdTime = new Date(nowMs - thresholdMs);
 
-    const longRunningJobs = await this.agenda._collection
+    const candidates = await this.agenda._collection
       .find({
         lockedAt: { $exists: true, $ne: null },
         lastRunAt: { $exists: true, $ne: null, $lt: thresholdTime },
@@ -473,15 +536,26 @@ class AgendaMetricsCollector {
       })
       .toArray();
 
-    return {
-      count: longRunningJobs.length,
-      jobs: longRunningJobs.map((job) => ({
+    const longRunningJobs = [];
+    for (const job of candidates) {
+      const durationMin = (nowMs - job.lastRunAt.getTime()) / (1000 * 60);
+      const jobThreshold = this._longRunningThresholdForJobName(job.name);
+      if (durationMin <= jobThreshold) {
+        continue;
+      }
+      longRunningJobs.push({
         name: job.name,
         startedAt: job.lastRunAt,
-        durationMin: Math.round((now - job.lastRunAt) / 60000),
+        durationMin: Math.round(durationMin),
         lockedAt: job.lockedAt,
-      })),
-      threshold: `${thresholdMinutes} minutes`,
+        thresholdMinutes: jobThreshold,
+      });
+    }
+
+    return {
+      count: longRunningJobs.length,
+      jobs: longRunningJobs,
+      threshold: this._longRunningThresholdSummary(),
     };
   }
 
@@ -580,7 +654,7 @@ class AgendaMetricsCollector {
 
         const longResult = await this._runCheckWithTimeout(
           'longRunningJobs',
-          () => this._checkLongRunningJobs(SYSTEM_LONG_RUNNING_JOB_MINUTES)
+          () => this._checkLongRunningJobs()
         );
         health.longRunningJobs = {
           count: longResult.success ? longResult.result.count : 0,

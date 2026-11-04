@@ -79,6 +79,32 @@ agenda_health_status{alert_name="your_alert_name", title="Your Alert Title", des
 - `description`: Detailed description of what the alert monitors (empty string if not provided)
 - `process`: The process name running the health checks
 
+## System health check (long-running Agenda jobs)
+
+The built-in system health check (enabled by default) sets `long_running_jobs_count` and affects `system_health_status`. **If you omit the options below, behavior is unchanged:** jobs running longer than **30 minutes** count as long-running.
+
+Optional `healthCheck` fields:
+
+| Field | Default | Description |
+|--------|---------|-------------|
+| `longRunningJobMinutes` | `30` | Minutes before a locked Agenda job counts as long-running |
+| `longRunningJobMinutesByName` | `{}` | Per job name (Agenda `job.name`) overrides, e.g. `{ "poll-status-production": 60 }` |
+
+```javascript
+const metricsCollector = new AgendaMetricsCollector(agenda, {
+  processName: process.env.name,
+  metricsFilePath: '/path/to/agenda_metrics.prom',
+  healthCheck: {
+    longRunningJobMinutes: 30,
+    longRunningJobMinutesByName: {
+      [`poll-status-${process.env.RELEASE}`]: 60,
+    },
+  },
+});
+```
+
+Invalid or missing values fall back to defaults; unknown job names still use `longRunningJobMinutes`.
+
 ## Usage Example
 
 ```javascript
